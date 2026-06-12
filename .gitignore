@@ -7,6 +7,3 @@ env/
 __pycache__/
 *.pyc
 
-# Cartelle di output e database locali
-output/
-input_docs/
