@@ -106,5 +106,5 @@ Quando il terminale ti dice che l'elaborazione è completata:
 
 ## 🤖 Dietro le quinte & Credits
 
-* **L'Interfaccia e la Struttura:** La struttura base del sito web (`index.html`) e il ragionamento logico dietro il design dell'interfaccia utente provengono da un progetto esterno. Un grande ringraziamento all'autore originale per l'ottima base di partenza visiva!
+* **L'Interfaccia e la Struttura:** * **L'Interfaccia e la Struttura:** La struttura base del sito web (`index.html`) e il ragionamento logico dietro il design dell'interfaccia utente provengono dal fantastico lavoro di [@MerryDoThings], progetto [reti](https://github.com/MerryDoThings/reti.git). Un grande ringraziamento a lui per l'ottima base di partenza visiva!
 * **Vibe Coding & Automazione (Il mio contributo):** Il mio lavoro si è concentrato nel rendere questa struttura completamente **dinamica e autonoma**. Attraverso il *vibe coding* (strutturando la logica e programmando in conversazione continua con l'Intelligenza Artificiale), ho costruito da zero il motore in Python. Lo script ora automatizza la lettura dei PDF, interroga le API a cascata, gestisce gli errori di rete e inietta dinamicamente i quiz e le palette colori direttamente nel codice frontend finale.
