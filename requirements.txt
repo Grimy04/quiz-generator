@@ -1,0 +1,7 @@
+pypdf
+python-docx
+python-pptx
+google-genai
+groq
+python-dotenv
+requests

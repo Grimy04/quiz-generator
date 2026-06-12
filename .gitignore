@@ -1,0 +1,12 @@
+# Chiavi API (CRITICO!)
+.env
+
+# Cartelle virtuali e cache di Python
+venv/
+env/
+__pycache__/
+*.pyc
+
+# Cartelle di output e database locali
+output/
+input_docs/
