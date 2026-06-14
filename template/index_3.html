@@ -1,0 +1,214 @@
+<!doctype html>
+<html lang="it">
+
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>QuizOS // Terminal</title>
+
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <link rel="stylesheet"
+        href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+    <script>
+        MathJax = { tex: { inlineMath: [['$', '$'], ['\\(', '\\)']], displayMath: [['$$', '$$'], ['\\[', '\\]']] } };
+    </script>
+    <script id="MathJax-script" async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
+
+    <link rel="stylesheet" href="css/style_3.css">
+</head>
+
+<body>
+    <div class="crt-container">
+        <div class="grid">
+            <aside class="panel">
+                <h1>root@quizOS:~# <span class="blink">_</span></h1>
+
+                <div style="margin-bottom:15px; color:var(--dim)">// modules_loaded</div>
+                <ul id="menu">
+                    <li onclick="S.ch='all'; build()" id="c-all">run_all.sh</li>
+                </ul>
+
+                <ul>
+                    <li class="action-li" onclick="retryErrors()">retry_errors.sh</li>
+                </ul>
+
+                <div style="margin-top:25px; padding: 10px; border: 1px solid var(--dim); background: var(--dim-bg)">
+                    <label style="cursor:pointer; display:flex; align-items:center; gap: 10px;">
+                        <input type="checkbox" id="rev-tog" style="accent-color: var(--main);">
+                        --errors_only
+                    </label>
+                </div>
+
+                <div class="stats">
+                    > data_parse... <span id="s-pct">0%</span><br>
+                    > block_pass... <span id="s-ok">0</span><br>
+                    > block_fail... <span style="color:var(--err)" id="s-no">0</span><br>
+                    <br>
+                    <span style="cursor:pointer; text-decoration:underline; display:block; color:var(--dim)"
+                        onclick="resetAll()">> flush_dns() // full_reset</span>
+                </div>
+            </aside>
+
+            <main class="panel" style="min-height: 550px; display:flex; flex-direction:column;">
+                <div id="card" style="flex: 1;"></div>
+                <div class="kbd-hint">
+                    HOTKEYS: <span>←</span> <span>→</span> nav | <span>1-4</span> mcq | <span>V</span> <span>F</span>
+                    bool | <span>SPACE</span> decrypt
+                </div>
+            </main>
+        </div>
+    </div>
+
+    <footer class="site-credits crt-container">
+        > root_admin: <span>Francesco Grimaldi</span> <br>
+        > ping_repo: <a href="https://github.com/Grimy04" target="_blank">[github/Grimy04]</a> <br>
+        > ping_social: <a href="https://www.instagram.com/fragrimm_" target="_blank">[ig/fragrimm_]</a>
+    </footer>
+
+    <script src="data.js"></script>
+    <script>
+        const $ = s => document.querySelector(s);
+        let prog = JSON.parse(localStorage.getItem('qz_t') || '{}'), S = { ch: 'all', rev: false, pool: [], idx: 0 };
+
+        function save() { localStorage.setItem('qz_t', JSON.stringify(prog)); update(); render(); }
+
+        // FUNZIONI PER IL MARKDOWN
+        function md(txt) { return marked.parseInline(txt || ''); }
+        function mdBlock(txt) { return marked.parse(txt || ''); }
+
+        function update() {
+            let ok = 0, no = 0;
+            BANK.forEach(q => {
+                if (prog[q.id] && !prog[q.id].retry) {
+                    prog[q.id].ok ? ok++ : no++;
+                }
+            });
+            $('#s-ok').innerText = ok; $('#s-no').innerText = no;
+            $('#s-pct').innerText = BANK.length ? Math.round(((ok + no) / BANK.length) * 100) + '%' : '0%';
+
+            document.querySelectorAll('#menu li').forEach(l => l.classList.remove('on'));
+            const el = $(`#c-${S.ch}`);
+            if (el) el.classList.add('on');
+        }
+
+        function build() {
+            S.pool = BANK.filter(q => (S.ch === 'all' || q.ch === S.ch));
+            if (S.rev) {
+                S.pool = S.pool.filter(q => prog[q.id] && (!prog[q.id].ok || prog[q.id].retry));
+            }
+            S.idx = 0; update(); render();
+        }
+
+        function retryErrors() {
+            let hasErrors = false;
+            BANK.forEach(q => {
+                let p = prog[q.id];
+                if (p && !p.ok) {
+                    p.retry = true;
+                    hasErrors = true;
+                }
+            });
+            if (hasErrors) {
+                save();
+                $('#rev-tog').checked = true; S.rev = true; build();
+            }
+        }
+
+        function resetAll() {
+            prog = {}; save();
+            $('#rev-tog').checked = false; S.rev = false; build();
+        }
+
+        function handleAns(qId, isCorrect, pickIdx) {
+            if (!prog[qId] || prog[qId].retry) {
+                prog[qId] = { ok: isCorrect, pick: pickIdx }; save();
+            }
+        }
+
+        function render() {
+            const c = $('#card');
+            if (!S.pool.length) return c.innerHTML = '<br><br>> FATAL: EOF. No records found for current query parameters.<br>> System idle... <span class="blink">_</span>';
+
+            const q = S.pool[S.idx], p = prog[q.id];
+            const isAnswered = p && !p.retry;
+
+            let h = `<div class="q-meta"># query_id: ${q.id} // format: ${q.fmt}</div>
+                     <div class="q-text">> ${mdBlock(q.q)} <span class="blink" style="color:var(--dim)">_</span></div>`;
+
+            const makeBtn = (idx, isCorrect, lbl, keyHint) => {
+                let cls = isAnswered ? (isCorrect ? 'ok' : (p.pick === idx ? 'no' : '')) : '';
+                return `<button class="btn ${cls}" onclick="handleAns('${q.id}', ${isCorrect}, ${idx})" ${isAnswered ? 'disabled' : ''}>[${keyHint}] ${md(lbl)}</button>`;
+            };
+
+            if (q.fmt === 'vf') {
+                h += makeBtn(1, true === q.correct, 'true', 'v');
+                h += makeBtn(0, false === q.correct, 'false', 'f');
+            }
+            else if (q.fmt === 'mc') {
+                q.opts.forEach((o, i) => h += makeBtn(i, i === q.correct, o, i + 1));
+            }
+            else {
+                let pts = q.points ? mdBlock("- " + q.points.join("\n- ")) : (q.explain ? mdBlock(q.explain) : "");
+                h += isAnswered ? `<div class="expl">> executing decrypt... SUCCESS<br><br>${pts}<br>> end_dump</div>`
+                    : `<button class="btn" onclick="handleAns('${q.id}', false, -1)">> execute force_decrypt [SPACE]</button>`;
+            }
+
+            if (isAnswered && q.explain && q.fmt !== 'open') h += `<div class="expl">/* system_note:<br>${mdBlock(q.explain)} */</div>`;
+
+            h += `<div class="nav">
+                    <button onclick="S.idx--; render()" ${S.idx <= 0 ? 'disabled' : ''}>&lt; PREV</button>
+                    <span style="color:var(--dim)">packet ${S.idx + 1} / ${S.pool.length}</span>
+                    <button onclick="S.idx++; render()" ${S.idx >= S.pool.length - 1 ? 'disabled' : ''}>NEXT &gt;</button>
+                  </div>`;
+
+            c.innerHTML = h;
+
+            // APPLICA LE LIBRERIE DOPO AVER GENERATO L'HTML
+            c.querySelectorAll('pre code').forEach((block) => hljs.highlightElement(block));
+            if (typeof MathJax !== 'undefined' && MathJax.typesetPromise) {
+                MathJax.typesetPromise([c]);
+            }
+        }
+
+        document.addEventListener('keydown', e => {
+            if (!S.pool.length) return;
+            if (['ArrowLeft', 'ArrowRight', ' '].includes(e.key) && document.activeElement.tagName !== 'INPUT') e.preventDefault();
+
+            const q = S.pool[S.idx], p = prog[q.id];
+            const isAnswered = p && !p.retry;
+
+            if (e.key === 'ArrowLeft' && S.idx > 0) { S.idx--; render(); }
+            if (e.key === 'ArrowRight' && S.idx < S.pool.length - 1) { S.idx++; render(); }
+
+            if (!isAnswered) {
+                if (q.fmt === 'vf') {
+                    if (e.key.toLowerCase() === 'v') handleAns(q.id, true === q.correct, 1);
+                    if (e.key.toLowerCase() === 'f') handleAns(q.id, false === q.correct, 0);
+                }
+                if (q.fmt === 'mc') {
+                    const k = parseInt(e.key);
+                    if (k >= 1 && k <= q.opts.length) handleAns(q.id, (k - 1) === q.correct, k - 1);
+                }
+                if (q.fmt === 'open' && (e.code === 'Space' || e.key === ' ')) {
+                    handleAns(q.id, false, -1);
+                }
+            }
+        });
+
+        if (typeof META !== 'undefined') META.forEach(m => $('#menu').innerHTML += `<li onclick="S.ch='${m.ch}'; build()" id="c-${m.ch}">${m.ch}.sh</li>`);
+        $('#rev-tog').onchange = e => { S.rev = e.target.checked; build(); };
+        build();
+    </script>
+
+    <script>
+        (function () {
+            const d = document.createElement('footer');
+            d.className = 'site-credits';
+            d.innerHTML = `<span>${atob('Q3JlYXRvIGRhIEZyYW5jZXNjbyBHcmltYWxkaQ==')}</span><span>&middot;</span><a href="${atob('aHR0cHM6Ly9naXRodWIuY29tL0dyaW15MDQ=')}" target="_blank" rel="noopener noreferrer" title="GitHub"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 0C5.374 0 0 5.373 0 12c0 5.302 3.438 9.8 8.207 11.387.6.113.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576C20.566 21.797 24 17.3 24 12c0-6.627-5.373-12-12-12z"/></svg>${atob('R3JpbXkwNA==')}</a><span>&middot;</span><a href="${atob('aHR0cHM6Ly93d3cuaW5zdGFncmFtLmNvbS9mcmFncmltbV8/aWdzaD1jVEozYW5FMGNXZDNjRFJ6JnV0bV9zb3VyY2U9cXI=')}" target="_blank" rel="noopener noreferrer" title="Instagram"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2.163c3.204 0 3.584.012 4.85.07 3.252.148 4.771 1.691 4.919 4.919.058 1.265.069 1.645.069 4.849 0 3.205-.012 3.584-.069 4.849-.149 3.225-1.664 4.771-4.919 4.919-1.266.058-1.644.07-4.85.07-3.204 0-3.584-.012-4.849-.07-3.26-.149-4.771-1.699-4.919-4.92-.058-1.265-.07-1.644-.07-4.849 0-3.204.013-3.583.07-4.849.149-3.227 1.664-4.771 4.919-4.919 1.266-.057 1.645-.069 4.849-.069zM12 0C8.741 0 8.333.014 7.053.072 2.695.272.273 2.69.073 7.052.014 8.333 0 8.741 0 12c0 3.259.014 3.668.072 4.948.2 4.358 2.618 6.78 6.98 6.98C8.333 23.986 8.741 24 12 24c3.259 0 3.668-.014 4.948-.072 4.354-.2 6.782-2.618 6.979-6.98.059-1.28.073-1.689.073-4.948 0-3.259-.014-3.667-.072-4.947-.196-4.354-2.617-6.78-6.979-6.98C15.668.014 15.259 0 12 0zm0 5.838a6.162 6.162 0 100 12.324 6.162 6.162 0 000-12.324zM12 16a4 4 0 110-8 4 4 0 010 8zm6.406-11.845a1.44 1.44 0 100 2.881 1.44 1.44 0 000-2.881z"/></svg>${atob('ZnJhZ3JpbW1f')}</a>`;
+            document.body.appendChild(d);
+        })();
+    </script>
+</body>
+
+</html>

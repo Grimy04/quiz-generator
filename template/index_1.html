@@ -1,0 +1,348 @@
+<!doctype html>
+<html lang="it">
+
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Trainer Interattivo d'Esame</title>
+    
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link
+        href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400..800&family=Newsreader:ital,opsz,wght@0,6..72,400..600;1,6..72,400..500&family=Space+Mono:ital,wght@0,400;0,700;1,400&display=swap"
+        rel="stylesheet">
+   <link rel="stylesheet" href="css/style_1.css">
+</head>
+
+<body>
+    <canvas id="net" aria-hidden="true"></canvas>
+    <div class="grid" aria-hidden="true"></div>
+    <div class="ambient" aria-hidden="true"></div>
+
+    <header class="masthead">
+        <div class="masthead-in">
+            <div class="brand">
+                <span class="mark"><svg width="32" height="36" viewBox="0 0 32 36" fill="none" aria-hidden="true">
+                        <rect x="3" y="3" width="26" height="6.5" rx="2" stroke="var(--signal-2)" stroke-width="1.7" />
+                        <rect x="3" y="14" width="26" height="6.5" rx="2" stroke="var(--cream)" stroke-width="1.5"
+                            opacity=".78" />
+                        <rect x="3" y="25" width="26" height="6.5" rx="2" stroke="var(--cream)" stroke-width="1.5"
+                            opacity=".5" />
+                    </svg></span>
+                <span class="title">
+                    <span class="kick">Generatore Autonomo</span>
+                    <h1>Quiz App</h1>
+                    <span class="sub">Trainer didattico personalizzato</span>
+                </span>
+            </div>
+            <div class="gauge">
+                <svg class="dial" viewBox="0 0 120 120" aria-hidden="true">
+                    <circle cx="60" cy="60" r="38" fill="none" stroke="rgba(236,229,214,.1)" stroke-width="1"
+                        stroke-dasharray="2 6" />
+                    <circle cx="60" cy="60" r="46" fill="none" stroke="rgba(236,229,214,.12)" stroke-width="7"
+                        stroke-linecap="round" stroke-dasharray="216.77 400" transform="rotate(135 60 60)" />
+                    <circle id="readyArc" cx="60" cy="60" r="46" fill="none" stroke="url(#dg)" stroke-width="7"
+                        stroke-linecap="round" stroke-dasharray="289.027" stroke-dashoffset="289.027"
+                        transform="rotate(135 60 60)" style="transition:stroke-dashoffset .7s var(--ease)" />
+                    <defs>
+                        <linearGradient id="dg" x1="0" y1="0" x2="1" y2="1">
+                            <stop offset="0" stop-color="var(--signal)" />
+                            <stop offset="1" stop-color="var(--signal-2)" />
+                        </linearGradient>
+                    </defs>
+                </svg>
+                <div class="dial-read"><span id="readyPct">0%</span><small>pronto</small></div>
+            </div>
+        </div>
+    </header>
+
+    <div class="scene">
+        <div class="desk" aria-hidden="true"></div>
+        <div class="shell">
+            <aside class="rail">
+                <div>
+                    <div class="rail-head"><span class="eyebrow">Sezioni</span><span class="seq">argomenti</span></div>
+                    <nav class="stack" id="stack"></nav>
+                </div>
+                <div class="panel">
+                    <span class="eyebrow">Formato</span>
+                    <div class="segmented" id="fmtChips"></div>
+                    <div class="switches">
+                        <label class="switch"><input type="checkbox" id="togReview"><span>Solo da
+                                rivedere</span></label>
+                        <label class="switch"><input type="checkbox" id="togShuffle"><span>Mescola
+                                l'ordine</span></label>
+                        <button class="reset" id="resetBtn">azzera i progressi</button>
+                    </div>
+                </div>
+            </aside>
+            <main class="stage">
+                <div class="tilt-wrap">
+                    <div class="deck" id="deck">
+                        <div class="sheet-shadow" aria-hidden="true"></div>
+                        <div class="sheet-back" aria-hidden="true"></div>
+                        <article class="sheet" id="card"></article>
+                    </div>
+                </div>
+                <p class="kbd">← → naviga · 1–4 / V F rispondi · barra spazio rivela</p>
+            </main>
+        </div>
+    </div>
+
+    <!-- SEZIONE CREDITI CON ICONE SVG -->
+
+
+    <script src="data.js"></script>
+    <script>
+        const FMT = [["all", "Tutti"], ["vf", "V/F"], ["mc", "Scelta multipla"], ["open", "Aperte"], ["code", "Codice"]];
+        const FMTLABEL = { vf: "Vero / Falso", mc: "Scelta multipla", open: "Domanda aperta", code: "Codice" };
+
+        const S = { chapter: "all", fmt: "all", review: false, shuffle: false, idx: 0, pool: [], _lastId: null };
+        let progress = {};
+        const KEY = "quiz_trainer_v1";
+        function load() { try { const r = localStorage.getItem(KEY); if (r) progress = JSON.parse(r) || {}; } catch (e) { } }
+        function save() { try { localStorage.setItem(KEY, JSON.stringify(progress)); } catch (e) { } }
+        load();
+
+        const $ = s => document.querySelector(s);
+        function shuffle(a) { a = a.slice(); for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1));[a[i], a[j]] = [a[j], a[i]]; } return a; }
+        function isReview(id) { const p = progress[id]; return p && p.answered && (p.correct === false || p.self === "review" || p.self === "almost"); }
+
+        function buildPool() {
+            let p = BANK.filter(q => (S.chapter === "all" || q.ch === S.chapter) && (S.fmt === "all" || q.fmt === S.fmt));
+            if (S.review) p = p.filter(q => isReview(q.id));
+            if (S.shuffle) p = shuffle(p);
+            S.pool = p; S.idx = 0;
+        }
+        function chapterStats(ch) {
+            const qs = BANK.filter(q => q.ch === ch); let ans = 0, ok = 0;
+            qs.forEach(q => { const pr = progress[q.id]; if (pr && pr.answered) { ans++; if (pr.correct) ok++; } }); return { tot: qs.length, ans, ok };
+        }
+        function overall() { let ans = 0, ok = 0; BANK.forEach(q => { const pr = progress[q.id]; if (pr && pr.answered) { ans++; if (pr.correct) ok++; } }); return { tot: BANK.length, ans, ok }; }
+
+        function renderStack() {
+            const el = $("#stack"); el.innerHTML = "";
+            const o = overall();
+            const all = document.createElement("button");
+            all.className = "layer core" + (S.chapter === "all" ? " on" : "");
+            all.style.setProperty("--tone", "var(--signal)");
+            all.innerHTML = `<span class="layer-code">&#931;</span><span><span class="layer-name">Tutto il programma</span>
+    <span class="layer-sub">Ripasso totale · ${o.tot} quesiti</span>
+    <span class="layer-gauge"><i style="width:${o.tot ? Math.round(o.ans / o.tot * 100) : 0}%"></i></span></span>
+    <span class="layer-stat">${o.ans}/${o.tot}</span>`;
+            all.onclick = () => { S.chapter = "all"; buildPool(); renderAll(); };
+            el.appendChild(all);
+            if (typeof META !== 'undefined') {
+                META.forEach(m => {
+                    const st = chapterStats(m.ch);
+                    const b = document.createElement("button");
+                    b.className = "layer" + (S.chapter === m.ch ? " on" : "");
+                    b.style.setProperty("--tone", m.tone);
+                    b.innerHTML = `<span class="layer-code">${m.num}</span><span><span class="layer-name">${m.nm}</span>
+        <span class="layer-sub">${m.sb}</span>
+        <span class="layer-gauge"><i style="width:${st.tot ? Math.round(st.ans / st.tot * 100) : 0}%"></i></span></span>
+        <span class="layer-stat">${st.ans}/${st.tot}</span>`;
+                    b.onclick = () => { S.chapter = m.ch; buildPool(); renderAll(); };
+                    el.appendChild(b);
+                });
+            }
+        }
+        function renderChips() {
+            const el = $("#fmtChips"); el.innerHTML = "";
+            FMT.forEach(([v, l]) => {
+                const c = document.createElement("button");
+                c.className = "seg" + (S.fmt === v ? " on" : ""); c.textContent = l;
+                c.onclick = () => { S.fmt = v; buildPool(); renderAll(); }; el.appendChild(c);
+            });
+        }
+        function renderMeter() {
+            const o = overall(); const pct = o.tot ? Math.round(o.ans / o.tot * 100) : 0;
+            $("#readyPct").textContent = pct + "%";
+            const arc = document.getElementById("readyArc");
+            if (arc) { const C = 289.027, L = 216.77; arc.style.strokeDashoffset = (C - (pct / 100) * L).toFixed(1); }
+        }
+
+        function setAns(id, correct, extra) {
+            progress[id] = Object.assign({ answered: true, correct: !!correct }, extra || {});
+            save(); renderStack(); renderMeter();
+        }
+
+        function verdictHTML(ok) {
+            const mk = ok
+                ? '<svg class="vmark" viewBox="0 0 18 18" fill="none"><path d="M3.5 9.4l3.3 3.5L14.6 5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>'
+                : '<svg class="vmark" viewBox="0 0 18 18" fill="none"><path d="M5 5l8 8M13 5l-8 8" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>';
+            return `<div class="verdict ${ok ? "ok" : "no"}">${mk}${ok ? "corretto" : "sbagliato"}</div>`;
+        }
+        function escapeHTML(s) { return (s == null ? "" : String(s)).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;"); }
+
+        function renderCard() {
+            const card = $("#card");
+            if (!S.pool.length) {
+                card.innerHTML = `<div class="sheet-inner still"><div class="empty"><b>Niente qui</b><span>${S.review ? "Nessun elemento contrassegnato da rivedere." : "Nessuna domanda trovata per questi filtri."}</span></div></div>`;
+                S._lastId = null; return;
+            }
+            if (S.idx < 0) S.idx = 0; if (S.idx >= S.pool.length) S.idx = S.pool.length - 1;
+            const q = S.pool[S.idx]; const pr = progress[q.id] || {};
+            const m = (typeof META !== 'undefined') ? META.find(x => x.ch === q.ch) || { num: "-", nm: "Capitolo", tone: "#888" } : { num: "-", nm: "Capitolo", tone: "#888" };
+            const fresh = (S._lastId !== q.id); S._lastId = q.id;
+            let h = `<div class="sheet-meta">
+    <span class="meta-code"><b>${m.num}</b> · ${m.nm.toUpperCase()}</span>
+    ${isReview(q.id) ? '<span class="meta-badge">da rivedere</span>' : ''}
+    <span class="meta-fmt">${FMTLABEL[q.fmt]}</span></div>
+    <p class="prompt">${escapeHTML(q.q)}</p>`;
+            if (q.code) h += `<pre class="snippet">${escapeHTML(q.code)}</pre>`;
+
+            if (q.fmt === "vf") {
+                const a = pr.answered;
+                const cls = v => { if (!a) return ""; if (v === q.correct) return " correct"; if (pr.pick === v) return " wrong"; return ""; };
+                h += `<div class="choices vf">
+      <button class="choice${cls(true)}" data-v="true" ${a ? "disabled" : ""}><span class="choice-key">V</span>Vero</button>
+      <button class="choice${cls(false)}" data-v="false" ${a ? "disabled" : ""}><span class="choice-key">F</span>Falso</button></div>`;
+                h += `<div class="feedback${a ? " show" : ""}">${a ? verdictHTML(pr.correct) + `<div class="expl">${escapeHTML(q.explain)}</div>` : ""}</div>`;
+            } else if (q.fmt === "mc") {
+                const a = pr.answered; const L = ["A", "B", "C", "D", "E"];
+                h += `<div class="choices">`;
+                q.opts.forEach((o, i) => {
+                    let c = ""; if (a) { if (i === q.correct) c = " correct"; else if (pr.pick === i) c = " wrong"; }
+                    h += `<button class="choice${c}" data-i="${i}" ${a ? "disabled" : ""}><span class="choice-key">${L[i]}</span><span>${escapeHTML(o)}</span></button>`;
+                });
+                h += `</div><div class="feedback${a ? " show" : ""}">${a ? verdictHTML(pr.correct) + `<div class="expl">${escapeHTML(q.explain)}</div>` : ""}</div>`;
+            } else {
+                if (!pr.revealed) {
+                    h += `<button class="reveal" id="revealBtn">Mostra i punti chiave</button>`;
+                } else {
+                    h += `<div class="feedback show">
+        <div class="verdict key"><svg class="vmark" viewBox="0 0 18 18" fill="none"><path d="M7 3.5H4.5v11H7M11 3.5h2.5v11H11" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>punti chiave</div>
+        <ul class="keylist">${q.points.map(p => `<li>${escapeHTML(p)}</li>`).join("")}</ul>
+        <div class="selfgrade">
+          <button class="sg know${pr.self === "know" ? " sel" : ""}" data-s="know">la sapevo</button>
+          <button class="sg almost${pr.self === "almost" ? " sel" : ""}" data-s="almost">quasi</button>
+          <button class="sg review${pr.self === "review" ? " sel" : ""}" data-s="review">da rivedere</button>
+        </div></div>`;
+                }
+            }
+
+            h += `<div class="pager">
+    <button class="pgbtn" id="prevBtn" ${S.idx === 0 ? "disabled" : ""}>← indietro</button>
+    <span class="pager-count"><b>${S.idx + 1}</b> / ${S.pool.length}</span>
+    <button class="pgbtn" id="nextBtn" ${S.idx === S.pool.length - 1 ? "disabled" : ""}>avanti →</button></div>`;
+            card.innerHTML = `<div class="sheet-inner${fresh ? "" : " still"}">${h}</div>`;
+
+            card.querySelectorAll(".choice").forEach(b => {
+                if (b.dataset.v !== undefined) b.onclick = () => { const v = b.dataset.v === "true"; setAns(q.id, v === q.correct, { pick: v }); renderCard(); };
+                else if (b.dataset.i !== undefined) b.onclick = () => { const i = +b.dataset.i; setAns(q.id, i === q.correct, { pick: i }); renderCard(); };
+            });
+            const rb = card.querySelector("#revealBtn");
+            if (rb) rb.onclick = () => { progress[q.id] = Object.assign({}, progress[q.id], { revealed: true }); save(); renderCard(); };
+            card.querySelectorAll(".sg").forEach(b => b.onclick = () => { const s = b.dataset.s; setAns(q.id, s === "know", { revealed: true, self: s }); renderCard(); });
+            const pv = card.querySelector("#prevBtn"), nx = card.querySelector("#nextBtn");
+            if (pv) pv.onclick = () => { S.idx--; renderCard(); };
+            if (nx) nx.onclick = () => { S.idx++; renderCard(); };
+        }
+        function renderAll() { renderStack(); renderChips(); renderMeter(); renderCard(); }
+
+        $("#togReview").onchange = e => { S.review = e.target.checked; buildPool(); renderCard(); renderStack(); };
+        $("#togShuffle").onchange = e => { S.shuffle = e.target.checked; buildPool(); renderCard(); };
+        $("#resetBtn").onclick = function () {
+            if (!this.classList.contains("confirming")) {
+                this.classList.add("confirming");
+                this.dataset.label = this.textContent;
+                this.textContent = "sicuro? clicca di nuovo";
+                clearTimeout(this._t);
+                this._t = setTimeout(() => { this.classList.remove("confirming"); this.textContent = this.dataset.label; }, 3000);
+                return;
+            }
+            clearTimeout(this._t);
+            this.classList.remove("confirming");
+            this.textContent = this.dataset.label;
+            progress = {}; save();
+            $("#togReview").checked = false; $("#togShuffle").checked = false; S.review = false; S.shuffle = false; buildPool(); renderAll();
+        };
+
+        document.addEventListener("keydown", e => {
+            if (["INPUT", "TEXTAREA"].includes(document.activeElement.tagName)) return;
+            if (!S.pool.length) return;
+            const q = S.pool[S.idx]; const pr = progress[q.id] || {};
+            if (e.key === "ArrowRight" && S.idx < S.pool.length - 1) { S.idx++; renderCard(); return; }
+            if (e.key === "ArrowLeft" && S.idx > 0) { S.idx--; renderCard(); return; }
+            if (q.fmt === "vf" && !pr.answered) {
+                if (e.key === "v" || e.key === "V") { setAns(q.id, true === q.correct, { pick: true }); renderCard(); }
+                if (e.key === "f" || e.key === "F") { setAns(q.id, false === q.correct, { pick: false }); renderCard(); }
+            }
+            if (q.fmt === "mc" && !pr.answered) {
+                const i = parseInt(e.key, 10) - 1;
+                if (i >= 0 && i < q.opts.length) { setAns(q.id, i === q.correct, { pick: i }); renderCard(); }
+            }
+            if ((q.fmt === "open" || q.fmt === "code") && !pr.revealed && (e.key === " " || e.code === "Space")) {
+                e.preventDefault(); progress[q.id] = Object.assign({}, pr, { revealed: true }); save(); renderCard();
+            }
+        });
+
+        if (typeof BANK !== 'undefined') {
+            buildPool(); renderAll();
+        }
+
+        const REDUCE = matchMedia("(prefers-reduced-motion:reduce)").matches;
+        const FINE = matchMedia("(hover:hover) and (pointer:fine)").matches;
+
+        (function () {
+            const cv = document.getElementById("net"); if (!cv) return;
+            const ctx = cv.getContext("2d"); let W = 0, H = 0, nodes = [], packets = [], raf = 0; const D = 140;
+            function size() { W = cv.clientWidth; H = cv.clientHeight; cv.width = W; cv.height = H; }
+            function spawn() { const a = nodes[(Math.random() * nodes.length) | 0], b = nodes[(Math.random() * nodes.length) | 0]; return { a, b, t: Math.random(), sp: 0.0016 + Math.random() * 0.0022 }; }
+            function init() {
+                size();
+                const c = W < 760 ? 12 : 25;
+                nodes = []; for (let i = 0; i < c; i++)nodes.push({ x: Math.random() * W, y: Math.random() * H, vx: (Math.random() - .5) * .16, vy: (Math.random() - .5) * .16 });
+                const pc = W < 760 ? 3 : 5; packets = []; for (let i = 0; i < pc; i++)packets.push(spawn());
+            }
+            function links() {
+                for (let i = 0; i < nodes.length; i++) {
+                    for (let j = i + 1; j < nodes.length; j++) {
+                        const a = nodes[i], b = nodes[j], dx = a.x - b.x, dy = a.y - b.y, d2 = dx * dx + dy * dy;
+                        if (d2 < D * D) { const al = (1 - Math.sqrt(d2) / D) * 0.15; ctx.strokeStyle = "rgba(214,178,120," + al + ")"; ctx.lineWidth = 1; ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke(); }
+                    }
+                }
+            }
+            function dots(al) { for (const n of nodes) { ctx.fillStyle = "rgba(220,180,120," + al + ")"; ctx.beginPath(); ctx.arc(n.x, n.y, 1.4, 0, 7); ctx.fill(); } }
+            function frame() {
+                ctx.clearRect(0, 0, W, H); for (const n of nodes) { n.x += n.vx; n.y += n.vy; if (n.x < 0 || n.x > W) n.vx *= -1; if (n.y < 0 || n.y > H) n.vy *= -1; }
+                links(); dots(.5);
+                for (const p of packets) {
+                    p.t += p.sp; if (p.t >= 1) { Object.assign(p, spawn()); continue; }
+                    const x = p.a.x + (p.b.x - p.a.x) * p.t, y = p.a.y + (p.b.y - p.a.y) * p.t;
+                    const g = ctx.createRadialGradient(x, y, 0, x, y, 8); g.addColorStop(0, "rgba(214,178,120,.5)"); g.addColorStop(1, "transparent");
+                    ctx.fillStyle = g; ctx.beginPath(); ctx.arc(x, y, 8, 0, 7); ctx.fill();
+                    ctx.fillStyle = "rgba(255,255,255,.8)"; ctx.beginPath(); ctx.arc(x, y, 1.4, 0, 7); ctx.fill();
+                }
+                raf = requestAnimationFrame(frame);
+            }
+            function start() { cancelAnimationFrame(raf); if (REDUCE) { ctx.clearRect(0, 0, W, H); links(); dots(.45); } else frame(); }
+            init(); start(); let rt; window.addEventListener("resize", () => { clearTimeout(rt); rt = setTimeout(() => { init(); start(); }, 200); });
+        })();
+
+        (function () {
+            if (REDUCE || !FINE) return;
+            const deck = document.getElementById("deck");
+            let tx = 0, ty = 0, cx = 0, cy = 0, lz = 0, hover = false; const lerp = (a, b, n) => a + (b - a) * n;
+            window.addEventListener("mousemove", e => { tx = (e.clientX / window.innerWidth - .5) * 1.5; ty = (e.clientY / window.innerHeight - .5) * 1.5; }, { passive: true });
+            if (deck) { const w = deck.parentElement; w.addEventListener("mouseenter", () => hover = true); w.addEventListener("mouseleave", () => hover = false); }
+            (function loop() {
+                cx = lerp(cx, tx, .08); cy = lerp(cy, ty, .08); lz = lerp(lz, hover ? 18 : 0, .1);
+                if (deck) deck.style.transform = "rotateX(" + (-cy * 6) + "deg) rotateY(" + (cx * 8) + "deg) translateZ(" + lz + "px)";
+                requestAnimationFrame(loop);
+            })();
+        })();
+    </script>
+
+    <script>
+        (function () {
+            const d = document.createElement('footer');
+            d.className = 'site-credits';
+            d.innerHTML = `<span>${atob('Q3JlYXRvIGRhIEZyYW5jZXNjbyBHcmltYWxkaQ==')}</span><span>&middot;</span><a href="${atob('aHR0cHM6Ly9naXRodWIuY29tL0dyaW15MDQ=')}" target="_blank" rel="noopener noreferrer" title="GitHub"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 0C5.374 0 0 5.373 0 12c0 5.302 3.438 9.8 8.207 11.387.6.113.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576C20.566 21.797 24 17.3 24 12c0-6.627-5.373-12-12-12z"/></svg>${atob('R3JpbXkwNA==')}</a><span>&middot;</span><a href="${atob('aHR0cHM6Ly93d3cuaW5zdGFncmFtLmNvbS9mcmFncmltbV8/aWdzaD1jVEozYW5FMGNXZDNjRFJ6JnV0bV9zb3VyY2U9cXI=')}" target="_blank" rel="noopener noreferrer" title="Instagram"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2.163c3.204 0 3.584.012 4.85.07 3.252.148 4.771 1.691 4.919 4.919.058 1.265.069 1.645.069 4.849 0 3.205-.012 3.584-.069 4.849-.149 3.225-1.664 4.771-4.919 4.919-1.266.058-1.644.07-4.85.07-3.204 0-3.584-.012-4.849-.07-3.26-.149-4.771-1.699-4.919-4.92-.058-1.265-.07-1.644-.07-4.849 0-3.204.013-3.583.07-4.849.149-3.227 1.664-4.771 4.919-4.919 1.266-.057 1.645-.069 4.849-.069zM12 0C8.741 0 8.333.014 7.053.072 2.695.272.273 2.69.073 7.052.014 8.333 0 8.741 0 12c0 3.259.014 3.668.072 4.948.2 4.358 2.618 6.78 6.98 6.98C8.333 23.986 8.741 24 12 24c3.259 0 3.668-.014 4.948-.072 4.354-.2 6.782-2.618 6.979-6.98.059-1.28.073-1.689.073-4.948 0-3.259-.014-3.667-.072-4.947-.196-4.354-2.617-6.78-6.979-6.98C15.668.014 15.259 0 12 0zm0 5.838a6.162 6.162 0 100 12.324 6.162 6.162 0 000-12.324zM12 16a4 4 0 110-8 4 4 0 010 8zm6.406-11.845a1.44 1.44 0 100 2.881 1.44 1.44 0 000-2.881z"/></svg>${atob('ZnJhZ3JpbW1f')}</a>`;
+            document.body.appendChild(d);
+        })();
+    </script>
+</body>
+
+</html>

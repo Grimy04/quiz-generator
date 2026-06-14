@@ -7,11 +7,15 @@ import warnings
 import requests
 import re
 import sys
+import logging
 from datetime import datetime
 
 from cryptography.utils import CryptographyDeprecationWarning
 warnings.filterwarnings("ignore", category=CryptographyDeprecationWarning)
 warnings.filterwarnings("ignore", category=UserWarning, module="pypdf")
+
+# Zittisce i noiosi log di pypdf (come "Ignoring wrong pointing object")
+logging.getLogger("pypdf").setLevel(logging.ERROR)
 
 from pypdf import PdfReader
 from docx import Document
@@ -22,7 +26,7 @@ from groq import Groq
 from dotenv import load_dotenv
 
 # =========================
-# SETUP API
+# SETUP API E MODELLI
 # =========================
 
 load_dotenv()
@@ -38,6 +42,13 @@ groq_api_key = os.getenv("GROQ_API_KEY")
 groq_client = Groq(api_key=groq_api_key) if groq_api_key else None
 
 openrouter_api_key = os.getenv("OPENROUTER_API_KEY")
+
+OPENROUTER_MODELS = [
+    "nvidia/nemotron-3-ultra-550b-a55b:free",
+    "nex-agi/nex-n2-pro:free",
+    "qwen/qwen3-next-80b-a3b-instruct:free",
+    "openai/gpt-oss-120b:free"
+]
 
 PALETTE_OPZIONI = [
     {"nome": "Amber Warm", "ground": "#100E0A", "ground-2": "#1A1712", "cream": "#ECE5D6", "cream-2": "#A69C87", "cream-3": "#766C59", "signal": "#E0913A", "signal-2": "#F4B662", "signal-ink": "#B16C26", "cap_tones": ["#DDBE73", "#CBA158", "#B9853F", "#A56A33", "#8C552B", "#9A6A2F"]},
@@ -61,7 +72,7 @@ def rate_limit():
     ultima_richiesta = time.time()
 
 # =========================
-# UI: DASHBOARD RENDERER
+# UI: DASHBOARD RENDERER E MENU
 # =========================
 
 def print_banner():
@@ -69,6 +80,28 @@ def print_banner():
     print(f"\033[96m║              AI QUIZ GENERATOR v2.0                ║\033[0m")
     print(f"\033[96m║      PDF • DOCX • PPTX → Quiz Interattivi          ║\033[0m")
     print(f"\033[96m╚════════════════════════════════════════════════════╝\033[0m\n")
+
+def scegli_grafica():
+    print("\033[93m🎨 SCEGLI L'ANTEPRIMA DELLO STILE GRAFICO\033[0m")
+    print("--------------------------------------------------")
+    print(" \033[97m[1] Originale 3D\033[0m   -> Stile elegante, carte inclinate con effetto profondità.")
+    print(" \033[97m[2] Neumorfismo\033[0m    -> Stile app moderna, colori scuri vibranti, pannelli in vetro.")
+    print(" \033[97m[3] Hacker Terminal\033[0m-> Stile Matrix, schermo CRT con sfarfallio, linea di comando.")
+    print(" \033[97m[4] Hacker Terminal\033[0m-> Stile Matrix, schermo CRT con sfarfallio, linea di comando.")
+    print("--------------------------------------------------")
+    
+    while True:
+        scelta = input("👉 Digita il numero (1, 2 o 3) e premi Invio: ").strip()
+        if scelta == "1":
+            return "index_1.html"
+        elif scelta == "2":
+            return "index_2.html"
+        elif scelta == "3":
+            return "index_3.html"
+        elif scelta == "4":
+            return "index_4.html"
+        else:
+            print("\033[91m⚠️  Scelta non valida. Inserisci 1, 2 o 3.\033[0m")
 
 def print_final_box(mins, files, blocks, qs, tot_db):
     def rpad(s, w=27): return str(s).ljust(w)
@@ -84,9 +117,9 @@ def print_final_box(mins, files, blocks, qs, tot_db):
     print(f"\033[92m║ Database Totale   {rpad(tot_db_str)}║\033[0m")
     print(f"\033[92m╚══════════════════════════════════════════════╝\033[0m\n")
 
-def draw_dashboard(doc_name, blocco_curr, blocco_tot, dom_gen, motore, eta, file_curr, file_tot, b_curr, b_tot, tot_dom, speed, api_gem, api_groq, api_or, is_first=False):
+def draw_dashboard(doc_name, blocco_curr, blocco_tot, dom_gen, motore, eta, file_curr, file_tot, b_curr, b_tot, tot_dom, speed, api_gem, api_groq, api_or, ultimo_errore, is_first=False):
     if not is_first:
-        sys.stdout.write("\033[17A") # Ora 17 righe perché ne abbiamo aggiunta una
+        sys.stdout.write("\033[18A") 
 
     doc_str = f"{doc_name[:28]}"
     prog_str = f"{blocco_curr} / {blocco_tot} blocchi"
@@ -110,36 +143,59 @@ def draw_dashboard(doc_name, blocco_curr, blocco_tot, dom_gen, motore, eta, file
     print(f"🤖 Groq                 {api_groq} richieste\033[K")
     print(f"🤖 OpenRouter           {api_or} richieste\033[K")
     print(f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\033[K")
+    
+    err_str = ultimo_errore[:45].replace('\n', ' ') if ultimo_errore else "In ascolto... OK"
+    colore_err = "\033[91m" if ultimo_errore else "\033[92m"
+    print(f"{colore_err}⚠️ Status API: {err_str:<32}\033[0m\033[K")
+    
     sys.stdout.flush()
 
 # =========================
-# PROMPT
+# PROMPT E PARSING
 # =========================
 
 def get_prompt(blocco):
     return f"""
-Sei un professore universitario esigente. Genera da 4 a 7 domande FONDAMENTALI basandoti ESCLUSIVAMENTE sul testo fornito.
-REGOLE IMPORTANTISSIME:
-1. IGNORA TOTALMENTE info organizzative: nomi prof, università, bibliografia, indici.
-2. Concentrati sui concetti teorici, tecnici e pratici.
-3. Includi domande Vero/Falso (vf), a risposta multipla (mc) e a risposta aperta (open).
-4. REGOLA CRITICA: I quesiti di tipo "vf" DEVONO essere AFFERMAZIONI dichiarative (es. "La system call read ha 3 parametri."), ASSOLUTAMENTE NON domande dirette (vietato il punto interrogativo).
-5. ASSOLUTAMENTE VIETATO creare domande che facciano riferimento a immagini, grafici, tabelle, foto o figure (es. "Nella foto...", "Come illustrato nel grafico..."). Le domande devono essere comprensibili e risolvibili al 100% usando solo testo.
-6. NON ripetere concetti.
+        Sei un professore universitario esigente. Il tuo obiettivo è valutare la reale comprensione analitica degli studenti.
+        Genera da 4 a 7 domande FONDAMENTALI basandoti ESCLUSIVAMENTE sul testo fornito.
 
-Restituisci ESCLUSIVAMENTE un oggetto JSON con UNA SOLA CHIAVE chiamata "domande", che contiene un array di oggetti. NESSUN TESTO FUORI DAL JSON.
+        REGOLE DI CONTENUTO:
+        1. IGNORA TOTALMENTE info organizzative: nomi prof, università, bibliografia, indici.
+        2. Concentrati sui concetti teorici, tecnici e pratici. Cerca di valutare il ragionamento, non solo la memoria meccanica.
+        3. ASSOLUTAMENTE VIETATO creare domande che facciano riferimento a immagini, grafici, tabelle o figure.
+        4. NON ripetere mai lo stesso concetto in domande diverse.
+        5. FORMATTAZIONE (CRITICO): Usa SEMPRE il Markdown per la formattazione dei campi di testo (q, opts, explain, points).
+           - Usa i `backtick` per parole chiave tecniche.
+           - Usa i blocchi di codice ```linguaggio ... ``` per snippet a più righe.
+           - Usa il LaTeX matematico racchiuso tra $ per l'inline (es. $x^2$) e $$ per i blocchi matematici su più righe.
+           - Usa il **grassetto** per evidenziare i concetti cruciali.
 
-Struttura esatta obbligatoria:
-- "q": testo della domanda (o affermazione se vf)
-- "fmt": "vf", "mc", o "open"
-- "correct": per "vf" (true/false), per "mc" l'indice (0-3), per "open" null
-- "opts": per "mc" un array di 4 stringhe, altrimenti null
-- "explain": spiegazione per "vf" o "mc", altrimenti null
-- "points": per "open" un array di stringhe con concetti chiave, altrimenti null
+        REGOLE PER I FORMATI DELLE DOMANDE:
+        - VERO/FALSO ("vf"): DEVONO essere affermazioni dichiarative. ASSOLUTAMENTE VIETATO usare il punto interrogativo.
+        - SCELTA MULTIPLA ("mc"): Le opzioni errate DEVONO essere plausibili e ingannevoli.
+        - APERTE ("open"): Richiedi di spiegare il "perché" o il "come" di un concetto chiave.
 
-TESTO DEL BLOCCO:
-{blocco}
-"""
+        REGOLE DI OUTPUT:
+        Restituisci ESCLUSIVAMENTE un oggetto JSON valido con UNA SOLA CHIAVE chiamata "domande".
+        NON inserire commenti nel JSON. Usa i blocchi markdown per racchiudere il JSON.
+
+        Esempio di struttura JSON attesa:
+        {{
+        "domande": [
+        {{
+            "q": "Testo della domanda",
+            "fmt": "vf",
+            "correct": true,
+            "opts": null,
+            "explain": "Spiegazione della risposta",
+            "points": null
+        }}
+        ]
+        }}
+
+        TESTO DEL BLOCCO:
+        {blocco}
+    """
 
 def parse_domande(data, cid):
     items = data.get("domande", data) if isinstance(data, dict) else data
@@ -153,8 +209,14 @@ def parse_domande(data, cid):
     return out
 
 # =========================
-# LETTURA E SPLIT LOGICO
+# LETTURA, PULIZIA E SPLIT LOGICO
 # =========================
+
+def pulisci_testo(testo):
+    testo = re.sub(r'\n{3,}', '\n\n', testo)
+    testo = re.sub(r' {2,}', ' ', testo)
+    testo = re.sub(r'(?m)^\s*\d+\s*$', '', testo)
+    return testo.strip()
 
 def estrai_testo(filepath):
     ext = filepath.lower().split(".")[-1]
@@ -174,7 +236,8 @@ def estrai_testo(filepath):
                 for shape in s.shapes:
                     if hasattr(shape, "text"): testo += shape.text + "\n"
     except: pass
-    return testo
+    
+    return pulisci_testo(testo)
 
 def split_logico(testo, max_chars=7500):
     paragrafi = testo.replace("\r\n", "\n").split("\n\n")
@@ -198,59 +261,80 @@ def split_logico(testo, max_chars=7500):
     return blocchi
 
 # =========================
-# MOTORI AI (Silenziati per la UI)
+# MOTORI AI CON GESTIONE ERRORI E ROTAZIONE
 # =========================
 
 def genera_gemini(blocco, cid):
     global gemini_resume_time
-    if time.time() < gemini_resume_time: return None
+    if time.time() < gemini_resume_time: return None, "Gemini", "In pausa (Rate Limit)"
     try:
         rate_limit()
         r = client.models.generate_content(
             model="gemini-2.5-flash", contents=get_prompt(blocco),
             config=types.GenerateContentConfig(response_mime_type="application/json")
         )
-        return parse_domande(json.loads(r.text), cid), "Gemini"
+        return parse_domande(json.loads(r.text), cid), "Gemini", None
     except Exception as e:
-        if "429" in str(e) or "RESOURCE_EXHAUSTED" in str(e):
+        err_str = str(e)
+        if "429" in err_str or "RESOURCE_EXHAUSTED" in err_str:
             gemini_resume_time = time.time() + 86400
-        return None
+            return None, "Gemini", "Quota Esaurita (429)"
+        return None, "Gemini", f"JSON Err: {err_str[:30]}"
 
 def genera_groq(blocco, cid):
-    if not groq_client: return None
+    if not groq_client: return None, "Groq", "API Key mancante"
     try:
         r = groq_client.chat.completions.create(
             messages=[{"role":"user","content":get_prompt(blocco)}],
             model="llama-3.3-70b-versatile", response_format={"type":"json_object"}
         )
-        return parse_domande(json.loads(r.choices[0].message.content), cid), "Groq"
-    except: return None
+        return parse_domande(json.loads(r.choices[0].message.content), cid), "Groq", None
+    except Exception as e: 
+        return None, "Groq", f"Err: {str(e)[:30]}"
 
 def genera_openrouter(blocco, cid):
-    if not openrouter_api_key: return None
-    try:
-        r = requests.post(
-            "https://openrouter.ai/api/v1/chat/completions",
-            headers={"Authorization": f"Bearer {openrouter_api_key}"},
-            json={"model":"meta-llama/llama-3.1-8b-instruct", "messages":[{"role":"user","content":get_prompt(blocco)}]},
-            timeout=30
-        )
-        if r.status_code == 200:
-            content = r.json()["choices"][0]["message"]["content"]
-            match = re.search(r'\{[\s\S]*\}', content)
-            content_pulito = match.group(0) if match else content.replace("```json", "").replace("```", "").strip()
-            return parse_domande(json.loads(content_pulito), cid), "OpenRouter"
-        return None
-    except: return None
+    if not openrouter_api_key: return None, "OpenRouter", "API Key mancante"
+    ultimo_errore = ""
+    for model in OPENROUTER_MODELS:
+        try:
+            r = requests.post(
+                "https://openrouter.ai/api/v1/chat/completions",
+                headers={"Authorization": f"Bearer {openrouter_api_key}"},
+                json={"model": model, "messages":[{"role":"user","content":get_prompt(blocco)}]},
+                timeout=30
+            )
+            if r.status_code == 200:
+                content = r.json()["choices"][0]["message"]["content"]
+                match = re.search(r'\{[\s\S]*\}', content)
+                content_pulito = match.group(0) if match else content.replace("```json", "").replace("```", "").strip()
+                return parse_domande(json.loads(content_pulito), cid), "OpenRouter", None
+            elif r.status_code == 429:
+                ultimo_errore = f"429 su {model.split('/')[1][:10]}"
+                continue 
+            else:
+                ultimo_errore = f"HTTP {r.status_code}"
+                continue
+        except Exception as e: 
+            ultimo_errore = f"Err: {str(e)[:20]}"
+            continue
+            
+    return None, "OpenRouter", f"Esauriti. Ultimo err: {ultimo_errore}"
 
 def genera_domande(blocco, cid):
-    res = genera_gemini(blocco, cid)
-    if res: return res
-    res = genera_groq(blocco, cid)
-    if res: return res
-    res = genera_openrouter(blocco, cid)
-    if res: return res
-    return [], "FALLITO"
+    err_log = ""
+    qs, engine, err = genera_gemini(blocco, cid)
+    if qs is not None: return qs, engine, None
+    if err: err_log += f"[GEM: {err}] "
+
+    qs, engine, err = genera_groq(blocco, cid)
+    if qs is not None: return qs, engine, None
+    if err: err_log += f"[GROQ: {err}] "
+
+    qs, engine, err = genera_openrouter(blocco, cid)
+    if qs is not None: return qs, engine, None
+    if err: err_log += f"[OR: {err}]"
+
+    return [], "FALLITO", err_log.strip()
 
 # =========================
 # MAIN
@@ -259,6 +343,10 @@ def genera_domande(blocco, cid):
 def main():
     os.system("cls" if os.name == "nt" else "clear")
     print_banner()
+    
+    template_scelto = scegli_grafica()
+    print(f"\n\033[92m✅ Hai scelto il tema: {template_scelto}\033[0m\n")
+    time.sleep(1)
     
     input_dir, output_dir = "input_docs", "output"
     os.makedirs(output_dir, exist_ok=True)
@@ -270,7 +358,6 @@ def main():
     if os.path.exists(db_path):
         db = json.load(open(db_path, "r", encoding="utf-8"))
 
-    # LOGICA RECUPERO BLOCCHI MANCANTI
     usa_mancati = False
     mancati_data = []
     
@@ -282,7 +369,7 @@ def main():
                 scelta = input("   Vuoi generare ORA le domande per questi blocchi mancanti? (s/n): ").strip().lower()
                 if scelta == 's':
                     usa_mancati = True
-                print("") # Spazio vuoto per pulizia
+                print("") 
         except: pass
 
     file_map = []
@@ -300,7 +387,6 @@ def main():
             total_blocks += len(blocchi_list)
             
     else:
-        # LOGICA NORMALE: Cerca in input_docs
         files = [f for f in os.listdir(input_dir) if f.endswith((".pdf",".docx",".pptx"))]
         if not files:
             print("\033[91m❌ Nessun file trovato nella cartella 'input_docs'\033[0m")
@@ -319,15 +405,23 @@ def main():
 
     if not file_map:
         if usa_mancati:
-            print("\n\033[92m✅ Nessun blocco mancante da processare.\033[0m\n")
+            print("\n\033[92m✅ Nessun blocco mancante da processare.\033[0m")
         else:
-            print("\n\033[92m✅ Tutti i documenti sono già stati processati. Database aggiornato!\033[0m\n")
+            print("\n\033[92m✅ Tutti i documenti sono già stati processati. Database aggiornato!\033[0m")
+            
+        print(f"\033[90m⚙️  Rigenero il sito web con il tema {template_scelto}...\033[0m\n")
+        try:
+            palette = random.choice(PALETTE_OPZIONI)
+            with open(f"template/{template_scelto}", "r", encoding="utf-8") as t:
+                html = t.read().replace("/* {{THEME_VARIABLES}} */", f":root {{ --ground: {palette['ground']}; --signal: {palette['signal']}; }}")
+            with open(f"{output_dir}/index.html", "w", encoding="utf-8") as o:
+                o.write(html)
+        except Exception as e: print(f"Errore rigenerazione template: {e}")
         return
 
     print(f"\033[92m✓ Trovati {len(file_map)} file da elaborare ({total_blocks} blocchi totali).\033[0m\n")
     print("Inizio elaborazione. Non chiudere la finestra...\n")
     
-    # Inizializzazione Dashboard
     seen = set(q.get("q","") for q in db["questions"])
     processed = 0
     total_q = 0
@@ -335,6 +429,7 @@ def main():
     time_history = []
     api_stats = {"Gemini": 0, "Groq": 0, "OpenRouter": 0, "FALLITO": 0}
     is_first_draw = True
+    ultimo_errore = ""
     
     nuovi_mancati = []
 
@@ -357,17 +452,20 @@ def main():
             elapsed_min = (time.time() - start_time) / 60.0
             speed = int(processed / elapsed_min) if elapsed_min > 0 else 0
 
-            draw_dashboard(f, blocco_idx, tot_blocchi_file, domande_nel_file, "Pensiero...", eta_str, file_idx + 1, len(file_map), processed, total_blocks, total_q, speed, api_stats["Gemini"], api_stats["Groq"], api_stats["OpenRouter"], is_first_draw)
+            draw_dashboard(f, blocco_idx, tot_blocchi_file, domande_nel_file, "Pensiero...", eta_str, file_idx + 1, len(file_map), processed, total_blocks, total_q, speed, api_stats["Gemini"], api_stats["Groq"], api_stats["OpenRouter"], ultimo_errore, is_first_draw)
             is_first_draw = False
 
-            # Generazione
-            qs, engine = genera_domande(b, cid)
+            qs, engine, current_error = genera_domande(b, cid)
             
             time_history.append(time.time() - b_start)
             processed += 1
             num_domande = len(qs)
             
-            # GESTIONE FALLIMENTI E MANCATI
+            if current_error:
+                ultimo_errore = current_error
+            else:
+                ultimo_errore = "" 
+            
             if num_domande == 0:
                 nuovi_mancati.append({"f": f, "cid": cid, "testo": b})
             
@@ -376,30 +474,30 @@ def main():
             
             if engine in api_stats: api_stats[engine] += 1
 
-            # Aggiornamento UI
             elapsed_min = (time.time() - start_time) / 60.0
             speed = int(processed / elapsed_min) if elapsed_min > 0 else 0
             eta_sec = (total_blocks - processed) * avg
             minuti, secondi = divmod(int(eta_sec), 60)
             eta_str = f"{minuti:02d}m {secondi:02d}s"
             
-            draw_dashboard(f, blocco_idx, tot_blocchi_file, domande_nel_file, engine, eta_str, file_idx + 1, len(file_map), processed, total_blocks, total_q, speed, api_stats["Gemini"], api_stats["Groq"], api_stats["OpenRouter"], False)
+            draw_dashboard(f, blocco_idx, tot_blocchi_file, domande_nel_file, engine, eta_str, file_idx + 1, len(file_map), processed, total_blocks, total_q, speed, api_stats["Gemini"], api_stats["Groq"], api_stats["OpenRouter"], ultimo_errore, False)
 
             for q in qs:
                 if q["q"] not in seen:
                     db["questions"].append(q)
                     seen.add(q["q"])
 
-    # AGGIORNAMENTO FILE MANCATI
     if usa_mancati:
-        # Se abbiamo processato i mancati, salviamo SOLO quelli che hanno fallito di nuovo
-        json.dump(nuovi_mancati, open(path_mancati, "w", encoding="utf-8"), indent=2)
+        if len(nuovi_mancati) == 0 and os.path.exists(path_mancati):
+            os.remove(path_mancati)
+            print(f"\n\033[92m🗑️  Tutti i blocchi recuperati! Il file 'blocchi_mancati.json' è stato eliminato.\033[0m")
+        elif len(nuovi_mancati) > 0:
+            json.dump(nuovi_mancati, open(path_mancati, "w", encoding="utf-8"), indent=2)
     else:
-        # Se abbiamo fatto un giro normale, aggiungiamo i nuovi fallimenti a quelli vecchi
-        mancati_data.extend(nuovi_mancati)
-        json.dump(mancati_data, open(path_mancati, "w", encoding="utf-8"), indent=2)
+        if len(nuovi_mancati) > 0:
+            mancati_data.extend(nuovi_mancati)
+            json.dump(mancati_data, open(path_mancati, "w", encoding="utf-8"), indent=2)
 
-    # Aggiornamento Sito Web
     json.dump(db, open(db_path,"w",encoding="utf-8"), indent=2)
     palette = random.choice(PALETTE_OPZIONI)
     
@@ -409,17 +507,26 @@ def main():
         for i, c in enumerate(db["chapters"]):
             col = palette["cap_tones"][i % len(palette["cap_tones"])]
             nome_pulito = c.get("nome_originale", c["id"]).replace(".pdf", "").replace(".docx", "").replace(".pptx", "")
-            meta += f'  {{ch:"{c["id"]}", num:"{i+1:02d}", nm:"{nome_pulito}", sb:"", tone:"{col}"}},\n'
+            meta += f'  {{ch:"{c["id"]}", num:"{i+1:02d}", nm:"{nome_pulito}", sb:"\", tone:"{col}"}},\n'
         f.write(meta + "];\n")
 
+   # ... dopo aver caricato il template ...
     try:
-        with open("template/index.html", "r", encoding="utf-8") as t:
-            html = t.read().replace("/* {{THEME_VARIABLES}} */", f":root {{ --ground: {palette['ground']}; --signal: {palette['signal']}; }}")
-        with open(f"{output_dir}/index.html", "w", encoding="utf-8") as o:
+        with open(template_path, "r", encoding="utf-8") as t:
+            html = t.read()
+        
+        # INVECE di usare percorsi complessi, assicuriamoci che il CSS sia caricato correttamente
+        # Se il tuo file è in output/index.html, il css deve stare in output/css/
+        html = html.replace("/* {{THEME_VARIABLES}} */", f":root {{ --ground: {palette['ground']}; --signal: {palette['signal']}; }}")
+        
+        # FORZA il percorso CSS relativo corretto
+        html = html.replace('href="css/', 'href="./css/') 
+        
+        with open(output_path, "w", encoding="utf-8") as o:
             o.write(html)
-    except: pass
+    except Exception as e:
+        print(f"Errore: {e}")
 
-    # Scatola Finale
     minuti_totali = int((time.time() - start_time) // 60)
     print_final_box(minuti_totali, len(file_map), total_blocks, total_q, len(db['questions']))
     

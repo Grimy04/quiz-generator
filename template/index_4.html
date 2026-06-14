@@ -1,0 +1,338 @@
+<!doctype html>
+<html lang="it">
+
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Trainer Interattivo d'Esame</title>
+
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link
+        href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,400;0,9..40,600;0,9..40,700;1,9..40,300&family=JetBrains+Mono:ital,wght@0,300;0,400;0,700;1,300&family=Syne:wght@400;600;800&display=swap"
+        rel="stylesheet">
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <link rel="stylesheet"
+        href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+    <script>
+        MathJax = { tex: { inlineMath: [['$', '$'], ['\\(', '\\)']], displayMath: [['$$', '$$'], ['\\[', '\\]']] } };
+    </script>
+    <script id="MathJax-script" async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
+    <link rel="stylesheet" href="css/style_4.css">
+</head>
+
+<body>
+    <div class="ambient"></div>
+    <div class="grid"></div>
+
+    <header class="masthead">
+        <div class="masthead-in">
+            <div class="brand">
+                <span class="mark">
+                    <svg width="30" height="30" viewBox="0 0 30 30" fill="none">
+                        <rect x="1" y="1" width="28" height="28" rx="6" stroke="var(--signal)" stroke-width="1"
+                            opacity="0.4" />
+                        <polyline points="6,15 12,9 18,21 24,15" stroke="var(--signal)" stroke-width="1.8"
+                            stroke-linecap="round" stroke-linejoin="round" fill="none" />
+                        <circle cx="6" cy="15" r="2" fill="var(--signal)" />
+                        <circle cx="24" cy="15" r="2" fill="var(--signal)" opacity="0.5" />
+                    </svg>
+                </span>
+                <span class="title">
+                    <span class="kick">Sistema</span>
+                    <h1>Quiz App</h1>
+                </span>
+            </div>
+
+            <div class="stats-hud">
+                <div class="hud-item">
+                    <span class="val" id="hudTot">0%</span>
+                    <span class="lbl">Progresso</span>
+                </div>
+                <div class="hud-item">
+                    <span class="val ok" id="hudOk">0</span>
+                    <span class="lbl">Corrette</span>
+                </div>
+                <div class="hud-item">
+                    <span class="val no" id="hudNo">0</span>
+                    <span class="lbl">Errate</span>
+                </div>
+            </div>
+        </div>
+    </header>
+
+    <div class="scene">
+        <div class="shell">
+            <aside class="rail">
+                <div class="panel">
+                    <span class="eyebrow">Navigazione Moduli</span>
+                    <nav class="stack" id="stack"></nav>
+                </div>
+                <div class="panel">
+                    <span class="eyebrow">Filtri e Opzioni</span>
+                    <div class="segmented" id="fmtChips"></div>
+                    <div class="switches">
+                        <label class="switch"><input type="checkbox" id="togReview"><span>Solo da
+                                rivedere</span></label>
+                        <label class="switch"><input type="checkbox" id="togShuffle"><span>Mescola ordine</span></label>
+
+                        <button class="reset" id="retryBtn">Riprova Errori</button>
+                        <button class="reset" id="resetBtn">Reset Progressi Totale</button>
+                    </div>
+                </div>
+            </aside>
+            <main class="stage">
+                <article class="sheet" id="card"></article>
+                <div class="kbd-hint">Scorciatoie Tastiera: <span>←</span> <span>→</span> Naviga | <span>1-4</span>
+                    Scelte | <span>V</span> <span>F</span> Vero/Falso | <span>Spazio</span> Rivela </div>
+            </main>
+        </div>
+    </div>
+
+    <script src="data.js"></script>
+    <script>
+        const FMT = [["all", "Tutti"], ["vf", "Vero / Falso"], ["mc", "Scelta Multipla"], ["open", "Aperte"]];
+        const FMTLABEL = { vf: "Vero / Falso", mc: "Scelta Multipla", open: "Aperta" };
+
+        const S = { chapter: "all", fmt: "all", review: false, shuffle: false, idx: 0, pool: [], _lastId: null };
+        let progress = {};
+        const KEY = "quiz_trainer_v2";
+
+        function load() { try { const r = localStorage.getItem(KEY); if (r) progress = JSON.parse(r) || {}; } catch (e) { } }
+        function save() { try { localStorage.setItem(KEY, JSON.stringify(progress)); } catch (e) { } }
+        load();
+
+        const $ = s => document.querySelector(s);
+        function shuffle(a) { a = a.slice(); for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1));[a[i], a[j]] = [a[j], a[i]]; } return a; }
+
+        // CORRETTO: Adesso controlla se c'è un errore a prescindere se sia stato appena risposto
+        function isReview(id) {
+            const p = progress[id];
+            return p && (p.correct === false || p.self === "review" || p.self === "almost");
+        }
+
+        function buildPool() {
+            let p = BANK.filter(q => (S.chapter === "all" || q.ch === S.chapter) && (S.fmt === "all" || q.fmt === S.fmt));
+            if (S.review) p = p.filter(q => isReview(q.id));
+            if (S.shuffle) p = shuffle(p);
+            S.pool = p; S.idx = 0;
+        }
+
+        function chapterStats(ch) {
+            const qs = BANK.filter(q => q.ch === ch); let ans = 0, ok = 0;
+            qs.forEach(q => { const pr = progress[q.id]; if (pr && pr.answered) { ans++; if (pr.correct) ok++; } }); return { tot: qs.length, ans, ok, no: ans - ok };
+        }
+
+        function overall() {
+            let ans = 0, ok = 0;
+            BANK.forEach(q => { const pr = progress[q.id]; if (pr && pr.answered) { ans++; if (pr.correct) ok++; } });
+            return { tot: BANK.length, ans, ok, no: ans - ok };
+        }
+
+        function renderStack() {
+            const el = $("#stack"); el.innerHTML = "";
+            const o = overall();
+
+            const all = document.createElement("div");
+            all.className = "layer" + (S.chapter === "all" ? " on" : "");
+            all.innerHTML = `
+                <div class="layer-code">Σ</div>
+                <div class="layer-info">
+                    <span class="layer-name">Tutto il database</span>
+                    <div class="layer-gauge"><i style="width:${o.tot ? Math.round(o.ans / o.tot * 100) : 0}%"></i></div>
+                </div>`;
+            all.onclick = () => { S.chapter = "all"; buildPool(); renderAll(); };
+            el.appendChild(all);
+
+            if (typeof META !== 'undefined') {
+                META.forEach(m => {
+                    const st = chapterStats(m.ch);
+                    const b = document.createElement("div");
+                    b.className = "layer" + (S.chapter === m.ch ? " on" : "");
+                    b.innerHTML = `
+                        <div class="layer-code">${m.num}</div>
+                        <div class="layer-info">
+                            <span class="layer-name">${m.nm}</span>
+                            <div class="layer-gauge"><i style="width:${st.tot ? Math.round(st.ans / st.tot * 100) : 0}%"></i></div>
+                        </div>`;
+                    b.onclick = () => { S.chapter = m.ch; buildPool(); renderAll(); };
+                    el.appendChild(b);
+                });
+            }
+        }
+
+        function renderChips() {
+            const el = $("#fmtChips"); el.innerHTML = "";
+            FMT.forEach(([v, l]) => {
+                const c = document.createElement("button");
+                c.className = "seg" + (S.fmt === v ? " on" : ""); c.textContent = l;
+                c.onclick = () => { S.fmt = v; buildPool(); renderAll(); }; el.appendChild(c);
+            });
+        }
+
+        function renderMeter() {
+            const o = overall();
+            const pct = o.tot ? Math.round(o.ans / o.tot * 100) : 0;
+            $("#hudTot").textContent = pct + "%";
+            $("#hudOk").textContent = o.ok;
+            $("#hudNo").textContent = o.no;
+        }
+
+        function setAns(id, correct, extra) {
+            progress[id] = Object.assign({ answered: true, correct: !!correct }, extra || {});
+            save(); renderStack(); renderMeter();
+        }
+
+        function escapeHTML(s) { return (s == null ? "" : String(s)).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;"); }
+
+        function renderCard() {
+            const card = $("#card");
+            if (!S.pool.length) {
+                card.innerHTML = `<div style="text-align:center; padding: 60px 0;">
+                    <b style="font-size:1.8rem; display:block; margin-bottom:10px;">✨ Tutto pulito!</b>
+                    <span style="color:var(--ink-3)">Nessuna domanda trovata per questi filtri.</span>
+                </div>`;
+                return;
+            }
+            if (S.idx < 0) S.idx = 0; if (S.idx >= S.pool.length) S.idx = S.pool.length - 1;
+
+            const q = S.pool[S.idx]; const pr = progress[q.id] || {};
+            const m = (typeof META !== 'undefined') ? META.find(x => x.ch === q.ch) || { num: "-", nm: "Capitolo" } : { num: "-", nm: "Capitolo" };
+
+            card.style.animation = 'none';
+            card.offsetHeight;
+            card.style.animation = 'slideUp 0.5s var(--ease-out) both, floatCard 6s ease-in-out infinite';
+
+            let h = `<div class="sheet-meta">
+                <span class="meta-code">${m.num} - ${m.nm}</span>
+                <span class="meta-fmt">${FMTLABEL[q.fmt] || q.fmt}</span>
+            </div>
+            <p class="prompt">${escapeHTML(q.q)}</p>`;
+
+            if (q.fmt === "vf") {
+                const a = pr.answered;
+                const cls = v => { if (!a) return ""; if (v === q.correct) return " correct"; if (pr.pick === v) return " wrong"; return ""; };
+                h += `<div class="choices">
+                    <button class="choice${cls(true)}" data-v="true" ${a ? "disabled" : ""}><span class="choice-key">V</span> Vero</button>
+                    <button class="choice${cls(false)}" data-v="false" ${a ? "disabled" : ""}><span class="choice-key">F</span> Falso</button>
+                </div>`;
+                h += `<div class="feedback${a ? " show" : ""}">${a ? `<div class="verdict ${pr.correct ? 'ok' : 'no'}">${pr.correct ? '✓ Risposta Esatta' : '✗ Risposta Errata'}</div><div class="expl">${escapeHTML(q.explain)}</div>` : ""}</div>`;
+            } else if (q.fmt === "mc") {
+                const a = pr.answered; const L = ["1", "2", "3", "4"];
+                h += `<div class="choices">`;
+                q.opts.forEach((o, i) => {
+                    let c = ""; if (a) { if (i === q.correct) c = " correct"; else if (pr.pick === i) c = " wrong"; }
+                    h += `<button class="choice${c}" data-i="${i}" ${a ? "disabled" : ""}><span class="choice-key">${L[i]}</span><span>${escapeHTML(o)}</span></button>`;
+                });
+                h += `</div><div class="feedback${a ? " show" : ""}">${a ? `<div class="verdict ${pr.correct ? 'ok' : 'no'}">${pr.correct ? '✓ Risposta Esatta' : '✗ Risposta Errata'}</div><div class="expl">${escapeHTML(q.explain)}</div>` : ""}</div>`;
+            } else if (q.fmt === "open") {
+                const a = pr.answered;
+                h += `<div class="choices">
+                    <button class="choice" id="revealBtn" ${a ? "disabled style='display:none'" : ""}><span class="choice-key">␣</span> Clicca o premi Spazio per rivelare</button>
+                </div>`;
+                h += `<div class="feedback${a ? " show" : ""}">${a ? `<div class="verdict ok">✓ Punti Chiave</div><div class="expl">${q.points ? escapeHTML(q.points.join(" • ")) : escapeHTML(q.explain)}</div>` : ""}</div>`;
+            }
+
+            h += `<div class="pager">
+                <button class="pgbtn" id="prevBtn" ${S.idx === 0 ? "disabled" : ""}>← Precedente</button>
+                <span class="pager-count">Domanda ${S.idx + 1} di ${S.pool.length}</span>
+                <button class="pgbtn" id="nextBtn" ${S.idx === S.pool.length - 1 ? "disabled" : ""}>Prossima →</button>
+            </div>`;
+
+            card.innerHTML = h;
+
+            card.querySelectorAll(".choice").forEach(b => {
+                if (b.dataset.v !== undefined) b.onclick = () => { const v = b.dataset.v === "true"; setAns(q.id, v === q.correct, { pick: v }); renderCard(); };
+                else if (b.dataset.i !== undefined) b.onclick = () => { const i = +b.dataset.i; setAns(q.id, i === q.correct, { pick: i }); renderCard(); };
+            });
+
+            if (q.fmt === "open") {
+                const rb = card.querySelector("#revealBtn");
+                if (rb) rb.onclick = () => { setAns(q.id, true, { pick: -1 }); renderCard(); };
+            }
+
+            const pv = card.querySelector("#prevBtn"), nx = card.querySelector("#nextBtn");
+            if (pv) pv.onclick = () => { S.idx--; renderCard(); };
+            if (nx) nx.onclick = () => { S.idx++; renderCard(); };
+        }
+
+        function renderAll() { renderStack(); renderChips(); renderMeter(); renderCard(); }
+
+        // GESTIONE EVENTI KEYBOARD
+        document.addEventListener('keydown', e => {
+            if (!S.pool.length) return;
+
+            if (['ArrowLeft', 'ArrowRight', ' '].includes(e.key) && document.activeElement.tagName !== 'INPUT') {
+                e.preventDefault();
+            }
+
+            const q = S.pool[S.idx];
+            const pr = progress[q.id] || {};
+
+            if (e.key === 'ArrowLeft' && S.idx > 0) { S.idx--; renderCard(); }
+            if (e.key === 'ArrowRight' && S.idx < S.pool.length - 1) { S.idx++; renderCard(); }
+
+            if (!pr.answered) {
+                if (q.fmt === 'vf') {
+                    if (e.key.toLowerCase() === 'v') { setAns(q.id, true === q.correct, { pick: true }); renderCard(); }
+                    if (e.key.toLowerCase() === 'f') { setAns(q.id, false === q.correct, { pick: false }); renderCard(); }
+                }
+                if (q.fmt === 'mc') {
+                    const k = parseInt(e.key);
+                    if (k >= 1 && k <= q.opts.length) {
+                        setAns(q.id, (k - 1) === q.correct, { pick: k - 1 }); renderCard();
+                    }
+                }
+                if (q.fmt === 'open' && (e.code === 'Space' || e.key === ' ')) {
+                    setAns(q.id, true, { pick: -1 }); renderCard();
+                }
+            }
+        });
+
+        $("#togReview").onchange = e => { S.review = e.target.checked; buildPool(); renderCard(); renderStack(); };
+        $("#togShuffle").onchange = e => { S.shuffle = e.target.checked; buildPool(); renderCard(); };
+
+        // CORRETTO: CANCELLA LE RISPOSTE SENZA ELIMINARLE DALLA MEMORIA DEGLI ERRORI
+        $("#retryBtn").onclick = function () {
+            let hasErrors = false;
+            BANK.forEach(q => {
+                let p = progress[q.id];
+                if (p && p.correct === false) {
+                    p.answered = false; // Rende la domanda di nuovo cliccabile
+                    delete p.pick;      // Toglie la memoria di cosa avevi cliccato
+                    hasErrors = true;
+                }
+            });
+
+            if (hasErrors) {
+                save();
+                $("#togReview").checked = true; // Forza l'interfaccia nella modalità revisione
+                S.review = true;
+                buildPool();
+                renderAll();
+            }
+        };
+
+        // RESETTA TUTTO SENZA POP-UP
+        $("#resetBtn").onclick = function () {
+            progress = {}; save();
+            $("#togReview").checked = false; $("#togShuffle").checked = false;
+            S.review = false; S.shuffle = false;
+            buildPool(); renderAll();
+        };
+
+        if (typeof BANK !== 'undefined') { buildPool(); renderAll(); }
+    </script>
+
+    <script>
+        (function () {
+            const d = document.createElement('footer');
+            d.className = 'site-credits';
+            d.innerHTML = `<span>${atob('Q3JlYXRvIGRhIEZyYW5jZXNjbyBHcmltYWxkaQ==')}</span><span>&middot;</span><a href="${atob('aHR0cHM6Ly9naXRodWIuY29tL0dyaW15MDQ=')}" target="_blank" rel="noopener noreferrer" title="GitHub"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 0C5.374 0 0 5.373 0 12c0 5.302 3.438 9.8 8.207 11.387.6.113.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576C20.566 21.797 24 17.3 24 12c0-6.627-5.373-12-12-12z"/></svg>${atob('R3JpbXkwNA==')}</a><span>&middot;</span><a href="${atob('aHR0cHM6Ly93d3cuaW5zdGFncmFtLmNvbS9mcmFncmltbV8/aWdzaD1jVEozYW5FMGNXZDNjRFJ6JnV0bV9zb3VyY2U9cXI=')}" target="_blank" rel="noopener noreferrer" title="Instagram"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2.163c3.204 0 3.584.012 4.85.07 3.252.148 4.771 1.691 4.919 4.919.058 1.265.069 1.645.069 4.849 0 3.205-.012 3.584-.069 4.849-.149 3.225-1.664 4.771-4.919 4.919-1.266.058-1.644.07-4.85.07-3.204 0-3.584-.012-4.849-.07-3.26-.149-4.771-1.699-4.919-4.92-.058-1.265-.07-1.644-.07-4.849 0-3.204.013-3.583.07-4.849.149-3.227 1.664-4.771 4.919-4.919 1.266-.057 1.645-.069 4.849-.069zM12 0C8.741 0 8.333.014 7.053.072 2.695.272.273 2.69.073 7.052.014 8.333 0 8.741 0 12c0 3.259.014 3.668.072 4.948.2 4.358 2.618 6.78 6.98 6.98C8.333 23.986 8.741 24 12 24c3.259 0 3.668-.014 4.948-.072 4.354-.2 6.782-2.618 6.979-6.98.059-1.28.073-1.689.073-4.948 0-3.259-.014-3.667-.072-4.947-.196-4.354-2.617-6.78-6.979-6.98C15.668.014 15.259 0 12 0zm0 5.838a6.162 6.162 0 100 12.324 6.162 6.162 0 000-12.324zM12 16a4 4 0 110-8 4 4 0 010 8zm6.406-11.845a1.44 1.44 0 100 2.881 1.44 1.44 0 000-2.881z"/></svg>${atob('ZnJhZ3JpbW1f')}</a>`;
+            document.body.appendChild(d);
+        })();
+    </script>
+</body>
+
+</html>
